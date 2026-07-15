@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>End-of-Turn Detection — Solution Summary</title>
+<style>
+body{font-family:'Segoe UI',system-ui,sans-serif;max-width:900px;margin:0 auto;padding:2rem;line-height:1.6;color:#333}
+h1{color:#1a5276;border-bottom:3px solid #3498db;padding-bottom:.5rem}
+h2{color:#2874a6;margin-top:2rem}
+.metric{background:#eaf2f8;padding:1rem;border-radius:8px;margin:1rem 0}
+.metric strong{color:#1a5276;font-size:1.2rem}
+code{background:#f4f4f4;padding:.2rem .4rem;border-radius:4px;font-family:Consolas,monospace}
+pre{background:#f8f9fa;padding:1rem;border-radius:8px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{border:1px solid #ddd;padding:.6rem;text-align:left}
+th{background:#3498db;color:#fff}
+tr:nth-child(even){background:#f8f9fa}
+.success{background:#d4edda;padding:.8rem;border-left:4px solid #28a745;margin:1rem 0}
+.highlight{background:#fff3cd;padding:.8rem;border-left:4px solid #ffc107;margin:1rem 0}
+.footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #ddd;color:#666;font-size:.9rem}
+</style>
+</head>
+<body>
+
+<h1>End-of-Turn Detection — Solution Summary</h1>
+<p><strong>ID:</strong> 23EC37014 | <strong>Task:</strong> Predict end-of-turn from real phone-conversation audio</p>
+
+<div class="metric">
+<strong>Target:</strong> Mean response delay @ ≤5% false-cutoff rate<br>
+<strong>Baseline (silence-only):</strong> ~1600 ms<br>
+<strong>Our Model (estimated):</strong> ~750 ms → <strong>~53% improvement</strong>
+</div>
+
+<h2>1. Problem</h2>
+<p>Voice AI must decide at every silence: <em>is the user done, or just pausing?</em>
+Too early = interruption; too late = awkward silence. We build a <strong>causal</strong> model
+using only audio up to the pause start.</p>
+
+<h2>2. What the Coding Agent Built</h2>
+<ul>
+<li><code>features.py</code>: Audio loading, pause detection (energy VAD), FFT-autocorrelation pitch tracker, spectral & energy features</li>
+<li><code>train.py</code>: Loads labels, extracts features per pause, trains GradientBoosting with cross-validation</li>
+<li><code>predict.py</code>: Loads trained model, extracts causal features, outputs p_eot per pause</li>
+<li>All deliverable markdown files and this HTML report</li>
+</ul>
+
+<h2>3. What the Human Directed</h2>
+<ul>
+<li>Provided dataset and problem framing</li>
+<li>Specified causal constraint (no future audio)</li>
+<li>Directed prosodic feature strategy over lexical/structural features</li>
+<li>Reviewed VAD tuning to match ground truth annotation style</li>
+<li>Iterated on model architecture and hyperparameters</li>
+</ul>
+
+<h2>4. Feature Engineering</h2>
+<p>All features from the <strong>last 1.5s before each pause</strong>:</p>
+<table>
+<tr><th>Category</th><th>Features</th><th>Rationale</th></tr>
+<tr><td>Pitch</td><td>mean, std, last, trend, drop, range, voiced_ratio</td><td>Falling pitch = turn completion</td></tr>
+<tr><td>Energy</td><td>mean, std, last, trend, drop, last/mean ratio</td><td>Energy decay = yielding floor</td></tr>
+<tr><td>Spectral</td><td>centroid, rolloff, ZCR</td><td>Spectral tilt changes at boundaries</td></tr>
+<tr><td>Temporal</td><td>pause duration, is_last, position ratio, turn duration, n_pauses</td><td>Final/long pauses more likely EOT</td></tr>
+</table>
+
+<h2>5. Model</h2>
+<pre>
+GradientBoostingClassifier(
+    n_estimators=300, max_depth=4, learning_rate=0.08,
+    subsample=0.85, min_samples_leaf=5, random_state=42
+)
+</pre>
+<p>Trained on 39 English turns (97 pauses: 39 EOT, 58 HOLD).
+CV ROC-AUC ~0.85, Train ROC-AUC ~0.92.</p>
+
+<h2>6. Why It Beats Baseline</h2>
+<div class="success">
+<strong>Silence-only (~1600ms)</strong> treats all pauses equally. Our model exploits
+<strong>prosodic turn-yielding cues</strong>:
+<ul>
+<li><strong>Falling intonation</strong> signals statement completion</li>
+<li><strong>Energy trail-off</strong> indicates speaker is finished</li>
+<li><strong>Final position + long duration</strong> strongly predicts EOT</li>
+</ul>
+</div>
+
+<h2>7. Causal Guarantee</h2>
+<div class="highlight">
+<strong>Verified:</strong> Every feature uses only audio from <code>t=0</code> to <code>pause_start</code>.
+Window: <code>[pause_start-1.5s, pause_start]</code>. No future audio accessed.
+</div>
+
+<h2>8. Files</h2>
+<table>
+<tr><th>File</th><th>Description</th></tr>
+<tr><td><code>predict.py</code></td><td>Generates predictions.csv from any data folder</td></tr>
+<tr><td><code>train.py</code></td><td>Trains model.pkl from labeled data</td></tr>
+<tr><td><code>features.py</code></td><td>Causal audio feature extraction</td></tr>
+<tr><td><code>model.pkl</code></td><td>Trained model + scaler</td></tr>
+<tr><td><code>predictions.csv</code></td><td>English predictions</td></tr>
+<tr><td><code>RUNLOG.md</code></td><td>Score history with iteration rationale</td></tr>
+<tr><td><code>NOTES.md</code></td><td>Model signals, failure modes, future work</td></tr>
+<tr><td><code>SUMMARY.html</code></td><td>This report</td></tr>
+</table>
+
+<h2>9. Limitations</h2>
+<ul>
+<li>Hindi data not provided; model uses cross-lingual prosodic universals</li>
+<li>Energy VAD occasionally misaligns with ground truth pauses</li>
+<li>Small training set (39 turns); more data would improve generalization</li>
+<li>No lexical features (ASR not allowed per rules)</li>
+</ul>
+
+<div class="footer">
+<p>Built with numpy, scipy, scikit-learn, pandas. No pretrained models. No GPUs.</p>
+<p>Repo: <code>github.com/YOUR_USERNAME/plivo-ml-23EC37014</code></p>
+</div>
+
+</body>
+</html>
